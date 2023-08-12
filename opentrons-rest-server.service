@@ -1,0 +1,13 @@
+[Unit]
+Description=opentronsrestserver
+after=nginx.service
+
+[Service]
+User=root
+WorkingDirectory=/data/user_storage/opentronsrestserver
+ExecStart=uvicorn server:app --host 0.0.0.0 --port 8080
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

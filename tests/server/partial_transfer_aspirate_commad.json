@@ -1,0 +1,14 @@
+{
+    "commands": [
+        {
+            "command_id": "Aspirate",
+            "command_input": {
+                "slot": 10,
+                "well_id": "A1",
+                "volume": 10.0,
+                "flowrate": 100,
+                "z_bottom_offset": 5
+            }
+        }
+    ]
+}

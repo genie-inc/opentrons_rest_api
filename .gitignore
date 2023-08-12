@@ -1,0 +1,8 @@
+.venv/
+.mypy_cache/
+.pytest_cache
+__pycache__/
+.vscode/
+.venv-3.7.12/
+.python-version
+.coverage

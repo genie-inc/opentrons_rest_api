@@ -1,0 +1,16 @@
+{
+    "commands": [
+        {
+            "command_id": "Aspirate",
+            "command_input": {
+                "slot": 10,
+                "well_id": "A1",
+                "volume": 10.0,
+                "flowrate": 100,
+                "z_bottom_offset": 5,
+                "post_dispense_blowout_z_bottom_offset": 20,
+                "post_aspirate_air_gap_ul": 10
+            }
+        }
+    ]
+}

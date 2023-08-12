@@ -1,0 +1,21 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.7
+
+  pre_build:
+    commands:
+      - pip install --user poetry
+      - export PATH=$PATH:/root/.local/bin
+      - poetry install
+
+  build:
+    commands:
+      - echo $(date "+%Y-%m-%d %H:%M:%S") Building...
+      - poetry run aws/run_tests.sh
+
+  post_build:
+    commands:
+      - echo $(date "+%Y-%m-%d %H:%M:%S") Build completed

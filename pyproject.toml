@@ -1,0 +1,30 @@
+[tool.poetry]
+name = "Opentrons REST Server"
+version = "0.1.0"
+description = "REST Server extension for Opentrons liquid handling robots"
+authors = []
+readme = "README.md"
+license = "MIT"
+packages = [
+  { include = "server" }
+]
+
+[tool.poetry.dependencies]
+python = "^3.7"
+fastapi = "^0.68.2"
+uvicorn = "^0.14"
+opentrons = "^6.2.1"
+
+[tool.poetry.group.dev.dependencies]
+mypy = "0.740"
+pycodestyle = "2.10.0"
+pylint = "2.4.2"
+pytest = "5.2.1"
+coverage = "4.5.4"
+pytest-cov = "2.8.1"
+requests-mock = "^1.9.3"
+autopep8 = "^2.0.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
