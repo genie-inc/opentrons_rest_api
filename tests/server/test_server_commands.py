@@ -1,6 +1,6 @@
 """ Command Parsing Tests """
 from json import loads
-from server.server import LoadLabwareDef, PartialTransfer, MixSettings, ResourceRef, execute
+from server.server import LoadLabwareDef, MoveDestination, PartialTransfer, MixSettings, ResourceRef, BlowoutSettings, execute
 
 
 def test_load_labware():
@@ -104,3 +104,26 @@ def test_execute_bad_command():
     assert result[0]["command_id"] == "foo"
     assert result[0]["status"] == "Failed"
     assert result[0]["message"] == 'command_id: foo not a handled command'
+
+
+def test_move_to_command():
+    with open('tests/server/move_to_command.json') as command_file:
+        state_str = command_file.read()
+    commands = loads(state_str)
+    move = MoveDestination.from_dict(commands["commands"][0]['command_input'])
+    assert move.z_offset == 0
+    assert move.slot == 12
+    assert move.well_id == "A1"
+    assert move.ref == ResourceRef("foo", "left")
+
+
+def test_blowout():
+    with open('tests/server/blowout.json') as command_file:
+        state_str = command_file.read()
+    commands = loads(state_str)
+    blowout = BlowoutSettings.from_dict(commands["commands"][0]['command_input'])
+    assert blowout.flowrate == 100
+    assert blowout.z_bottom_offset == 5
+    assert blowout.slot == 10
+    assert blowout.well_id == "A1"
+    assert blowout.ref == ResourceRef("foo", "left")

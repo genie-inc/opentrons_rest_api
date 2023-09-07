@@ -1,0 +1,16 @@
+{
+    "commands": [
+        {
+            "command_id": "MoveTo",
+            "command_input": {
+                "head_ref": {
+                    "name": "foo",
+                    "location": "left"
+                },
+                "slot": 12,
+                "well_id": "A1",
+                "z_offset": 0
+            }
+        }
+    ]
+}

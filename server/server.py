@@ -8,9 +8,11 @@ from fastapi import FastAPI
 from opentrons.execute import get_protocol_api
 from opentrons.simulate import get_protocol_api as get_simulated_protocol_api
 from opentrons.protocol_api import InstrumentContext, ProtocolContext, Well
+from opentrons.types import Point
 
 FIXED_TRASH_SLOT = 12
 VERSION = '0.2.0'
+MAX_TIP_LENGTH = 88
 
 
 class CommandId(str, Enum):
@@ -25,6 +27,9 @@ class CommandId(str, Enum):
     LoadLabwareDef = 'LoadLabwareDef'
     GetLabware = 'GetLabware'
     Mix = 'Mix'
+    MoveTo = 'MoveTo'
+    BlowOut = 'BlowOut'
+    ForceEjectTip = 'ForceEjectTip'
 
 
 @dataclass
@@ -119,6 +124,40 @@ class PartialTransfer(WellRef):
 
 
 @dataclass
+class BlowoutSettings(WellRef):
+    flowrate: float
+    z_bottom_offset: float
+
+    @classmethod
+    def from_dict(cls, state: Dict[str, Any]) -> 'BlowoutSettings':
+        well_ref = super().from_dict(state)
+        return BlowoutSettings(ref=well_ref.ref, slot=well_ref.slot, well_id=well_ref.well_id,
+                               flowrate=state['flowrate'], z_bottom_offset=state['z_bottom_offset'])
+
+    def to_dict(self) -> Dict[str, Any]:
+        obj_dict = super().to_dict()
+        obj_dict['flowrate'] = self.flowrate
+        obj_dict['z_bottom_offset'] = self.z_bottom_offset
+        return obj_dict
+
+
+@dataclass
+class MoveDestination(WellRef):
+    z_offset: Optional[int]
+
+    @classmethod
+    def from_dict(cls, state: Dict[str, Any]) -> 'MoveDestination':
+        ref = ResourceRef.from_dict(state['head_ref'])
+        return MoveDestination(ref=ref, slot=state['slot'], well_id=state['well_id'], z_offset=state.get('z_offset', None))
+
+    def to_dict(self) -> Dict[str, Any]:
+        obj_dict = super().to_dict()
+        if self.z_offset is not None:
+            obj_dict['z_offset'] = self.z_offset
+        return obj_dict
+
+
+@dataclass
 class MixSettings(WellRef):
     volume: float
     cycles: int
@@ -198,6 +237,15 @@ class ContextManager():
             location = self.get_well(mix).bottom(mix.post_mix_blowout_z_bottom_offset)
             self.load_instrument(mix.ref).blow_out(location=location)
 
+    def move_to(self, dest: MoveDestination) -> None:
+        """ Perform a move to the specified location """
+        well = self.get_well(dest)
+        location = well.top()
+        if dest.z_offset is not None:
+            location = location.move(Point(0, 0, dest.z_offset))
+
+        self.load_instrument(dest.ref).move_to(location=location)
+
     def reset(self) -> None:
         self.instruments = DefaultDict()
 
@@ -220,6 +268,11 @@ class ContextManager():
             location = self.get_well(transfer).bottom(transfer.post_dispense_blowout_z_bottom_offset)
             self.load_instrument(transfer.ref).blow_out(location=location)
 
+    def blow_out(self, blowout: BlowoutSettings) -> None:
+        self.load_instrument(blowout.ref).flow_rate.blow_out = blowout.flowrate
+        location = self.get_well(blowout).bottom(blowout.z_bottom_offset)
+        self.load_instrument(blowout.ref).blow_out(location=location)
+
     def affix_tip(self, well_ref: WellRef) -> None:
         well = self.get_well(well_ref)
         self.load_instrument(well_ref.ref).pick_up_tip(well)
@@ -227,6 +280,19 @@ class ContextManager():
     def eject_tip(self, well_ref: WellRef) -> None:
         well = self.get_well(well_ref)
         self.load_instrument(well_ref.ref).drop_tip(well)
+
+    def force_eject_tip(self, well_ref: WellRef) -> None:
+        """ During error recovery it is possible for a tip to be attached, but the Context
+            to not know it. This allows a force eject. """
+        if not self.load_instrument(well_ref.ref)._has_tip:  # pylint: disable=protected-access
+            try:
+                # pylint: disable=protected-access
+                self.load_instrument(well_ref.ref)._implementation._pipette_dict["has_tip"] = True  # type: ignore
+                # pylint: disable=protected-access
+                self.load_instrument(well_ref.ref)._implementation._pipette_dict["tip_length"] = MAX_TIP_LENGTH  # type: ignore
+            except Exception as ex:  # pylint: disable=broad-except
+                raise ValueError(f'Unable to set tip state to force eject. Error: {str(ex)}')
+        self.eject_tip(well_ref)
 
     def home(self, ref: ResourceRef) -> None:
         self.load_instrument(ref).home()
@@ -246,14 +312,20 @@ class ContextManager():
                 self.affix_tip(WellRef.from_dict(command['command_input']))
             elif command_id == CommandId.EjectTip:
                 self.eject_tip(WellRef.from_dict(command['command_input']))
+            elif command_id == CommandId.ForceEjectTip:
+                self.force_eject_tip(WellRef.from_dict(command['command_input']))
             elif command_id == CommandId.Aspirate:
                 self.aspirate(PartialTransfer.from_dict(command['command_input']))
             elif command_id == CommandId.Dispense:
                 self.dispense(PartialTransfer.from_dict(command['command_input']))
+            elif command_id == CommandId.BlowOut:
+                self.blow_out(BlowoutSettings.from_dict(command['command_input']))
             elif command_id == CommandId.ClearLabware:
                 self.clear_labware()
             elif command_id == CommandId.Mix:
                 self.mix(MixSettings.from_dict(command['command_input']))
+            elif command_id == CommandId.MoveTo:
+                self.move_to(MoveDestination.from_dict(command['command_input']))
             else:
                 raise ValueError(f'command_id: {command_id} not a handled command')
 
