@@ -1,14 +1,19 @@
 """ Opentron REST Server """
+from os import environ
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, DefaultDict, Dict, Optional
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from opentrons.execute import get_protocol_api
+from opentrons.simulate import get_protocol_api as get_simulated_protocol_api
 from opentrons.protocol_api import InstrumentContext, ProtocolContext, Well
+from opentrons.types import Point
 
 FIXED_TRASH_SLOT = 12
-VERSION = '0.1.0'
+VERSION = '0.2.0'
+MAX_TIP_LENGTH = 88
+
 
 class CommandId(str, Enum):
     Home = 'Home'
@@ -22,6 +27,9 @@ class CommandId(str, Enum):
     LoadLabwareDef = 'LoadLabwareDef'
     GetLabware = 'GetLabware'
     Mix = 'Mix'
+    MoveTo = 'MoveTo'
+    BlowOut = 'BlowOut'
+    ForceEjectTip = 'ForceEjectTip'
 
 
 @dataclass
@@ -33,6 +41,12 @@ class ResourceRef():
     def from_dict(cls, state: Dict[str, Any]) -> 'ResourceRef':
         return ResourceRef(name=state['name'], location=state['location'])
 
+    def to_dict(self) -> Dict[str, Any]:
+        obj_dict: Dict[str, Any] = DefaultDict()
+        obj_dict['name'] = self.name
+        obj_dict['location'] = self.location
+        return obj_dict
+
 
 @dataclass
 class LoadLabwareDef():
@@ -43,18 +57,39 @@ class LoadLabwareDef():
     def from_dict(cls, state: Dict[str, Any]) -> 'LoadLabwareDef':
         return LoadLabwareDef(location=state['location'], labware_def=state['labware_def'])
 
+    def to_dict(self) -> Dict[str, Any]:
+        obj_dict: Dict[str, Any] = DefaultDict()
+        obj_dict['location'] = self.location
+        obj_dict['labware_def'] = self.labware_def
+        return obj_dict
+
 
 @dataclass
-class WellRef():
+class InstrumentCommand():
+    ref: ResourceRef
+
+    @classmethod
+    def from_dict(cls, state: Dict[str, Any]) -> 'InstrumentCommand':
+        return InstrumentCommand(ref=ResourceRef.from_dict(state['head_ref']))
+
+    def to_dict(self) -> Dict[str, Any]:
+        obj_dict: Dict[str, Any] = DefaultDict()
+        obj_dict['head_ref'] = self.ref.to_dict()
+        return obj_dict
+
+
+@dataclass
+class WellRef(InstrumentCommand):
     slot: int
     well_id: str
 
     @classmethod
     def from_dict(cls, state: Dict[str, Any]) -> 'WellRef':
-        return WellRef(slot=state['slot'], well_id=state['well_id'])
+        ref = super().from_dict(state).ref
+        return WellRef(ref=ref, slot=state['slot'], well_id=state['well_id'])
 
     def to_dict(self) -> Dict[str, Any]:
-        obj_dict: Dict[str, Any] = DefaultDict()
+        obj_dict = super().to_dict()
         obj_dict['slot'] = self.slot
         obj_dict['well_id'] = self.well_id
         return obj_dict
@@ -70,10 +105,56 @@ class PartialTransfer(WellRef):
 
     @classmethod
     def from_dict(cls, state: Dict[str, Any]) -> 'PartialTransfer':
-        return PartialTransfer(slot=state['slot'], well_id=state['well_id'], volume=state['volume'],
-                               flowrate=state['flowrate'], z_bottom_offset=state['z_bottom_offset'],
+        well_ref = super().from_dict(state)
+        return PartialTransfer(ref=well_ref.ref, slot=well_ref.slot, well_id=well_ref.well_id,
+                               volume=state['volume'], flowrate=state['flowrate'], z_bottom_offset=state['z_bottom_offset'],
                                post_aspirate_air_gap_ul=state.get('post_aspirate_air_gap_ul', None),
                                post_dispense_blowout_z_bottom_offset=state.get('post_dispense_blowout_z_bottom_offset', None))
+
+    def to_dict(self) -> Dict[str, Any]:
+        obj_dict = super().to_dict()
+        obj_dict['volume'] = self.volume
+        obj_dict['flowrate'] = self.flowrate
+        obj_dict['z_bottom_offset'] = self.z_bottom_offset
+        if self.post_dispense_blowout_z_bottom_offset is not None:
+            obj_dict['post_dispense_blowout_z_bottom_offset'] = self.post_dispense_blowout_z_bottom_offset
+        if self.post_aspirate_air_gap_ul is not None:
+            obj_dict['post_aspirate_air_gap_ul'] = self.post_aspirate_air_gap_ul
+        return obj_dict
+
+
+@dataclass
+class BlowoutSettings(WellRef):
+    flowrate: float
+    z_bottom_offset: float
+
+    @classmethod
+    def from_dict(cls, state: Dict[str, Any]) -> 'BlowoutSettings':
+        well_ref = super().from_dict(state)
+        return BlowoutSettings(ref=well_ref.ref, slot=well_ref.slot, well_id=well_ref.well_id,
+                               flowrate=state['flowrate'], z_bottom_offset=state['z_bottom_offset'])
+
+    def to_dict(self) -> Dict[str, Any]:
+        obj_dict = super().to_dict()
+        obj_dict['flowrate'] = self.flowrate
+        obj_dict['z_bottom_offset'] = self.z_bottom_offset
+        return obj_dict
+
+
+@dataclass
+class MoveDestination(WellRef):
+    z_offset: Optional[int]
+
+    @classmethod
+    def from_dict(cls, state: Dict[str, Any]) -> 'MoveDestination':
+        ref = ResourceRef.from_dict(state['head_ref'])
+        return MoveDestination(ref=ref, slot=state['slot'], well_id=state['well_id'], z_offset=state.get('z_offset', None))
+
+    def to_dict(self) -> Dict[str, Any]:
+        obj_dict = super().to_dict()
+        if self.z_offset is not None:
+            obj_dict['z_offset'] = self.z_offset
+        return obj_dict
 
 
 @dataclass
@@ -87,8 +168,9 @@ class MixSettings(WellRef):
 
     @classmethod
     def from_dict(cls, state: Dict[str, Any]) -> 'MixSettings':
-        return MixSettings(slot=state['slot'], well_id=state['well_id'], volume=state['volume'],
-                           cycles=state['cycles'], z_bottom_offset=state['z_bottom_offset'],
+        well_ref = super().from_dict(state)
+        return MixSettings(ref=well_ref.ref, slot=well_ref.slot, well_id=well_ref.well_id,
+                           volume=state['volume'], cycles=state['cycles'], z_bottom_offset=state['z_bottom_offset'],
                            aspirate_flowrate=state['aspirate_flowrate'], dispense_flowrate=state['dispense_flowrate'],
                            post_mix_blowout_z_bottom_offset=state.get('post_mix_blowout_z_bottom_offset', None))
 
@@ -108,27 +190,24 @@ class ContextManager():
     def __init__(self):
         self._context: Optional[ProtocolContext] = None
         self.instruments: Dict[str, InstrumentContext] = DefaultDict()
-        self._default_instrument: Optional[InstrumentContext] = None
 
     @property
     def ctx(self) -> ProtocolContext:
         if self._context is None:
-            self._context = get_protocol_api('2.0')
+            if not self.debug:
+                self._context = get_protocol_api('2.0')
+            else:
+                self._context = get_simulated_protocol_api('2.0')
         return self._context
 
     @property
-    def default_instrument(self) -> InstrumentContext:
-        if self._default_instrument is None:
-            raise HTTPException(status_code=400, detail='Instrument not initialized')
-        return self._default_instrument
+    def debug(self) -> bool:
+        return 'OT_DEBUG' in environ
 
     def load_instrument(self, ref: ResourceRef) -> InstrumentContext:
-        if ref.location not in self.instruments:
-            instrument = self.ctx.load_instrument(ref.name, ref.location)
-            instrument.home()
-            self.instruments[ref.location] = instrument
-            if self._default_instrument is None:
-                self._default_instrument = instrument
+        if ref.location not in self.instruments or self.instruments[ref.location].hw_pipette.get("name", '') != ref.name:
+            self.instruments[ref.location] = self.ctx.load_instrument(ref.name, ref.location, replace=True)
+
         return self.instruments[ref.location]
 
     def load_labware(self, ref: ResourceRef) -> None:
@@ -150,42 +229,79 @@ class ContextManager():
 
     def mix(self, mix: MixSettings):
         """ Perform a standalone mix """
-        self.default_instrument.flow_rate.aspirate = mix.aspirate_flowrate
-        self.default_instrument.flow_rate.dispense = mix.dispense_flowrate
+        self.load_instrument(mix.ref).flow_rate.aspirate = mix.aspirate_flowrate
+        self.load_instrument(mix.ref).flow_rate.dispense = mix.dispense_flowrate
         location = self.get_well(mix).bottom(mix.z_bottom_offset)
-        self.default_instrument.mix(volume=mix.volume, location=location, repetitions=mix.cycles)
+        self.load_instrument(mix.ref).mix(volume=mix.volume, location=location, repetitions=mix.cycles)
         if mix.post_mix_blowout_z_bottom_offset is not None:
             location = self.get_well(mix).bottom(mix.post_mix_blowout_z_bottom_offset)
-            self.default_instrument.blow_out(location=location)
+            self.load_instrument(mix.ref).blow_out(location=location)
+
+    def move_to(self, dest: MoveDestination) -> None:
+        """ Perform a move to the specified location """
+        well = self.get_well(dest)
+        location = well.top()
+        if dest.z_offset is not None:
+            location = location.move(Point(0, 0, dest.z_offset))
+
+        self.load_instrument(dest.ref).move_to(location=location)
 
     def reset(self) -> None:
         self.instruments = DefaultDict()
-        self._default_instrument = None
 
         if self._context is not None:
             self._context.cleanup()
         self._context = None
 
     def aspirate(self, transfer: PartialTransfer) -> None:
-        self.default_instrument.flow_rate.aspirate = transfer.flowrate
+        self.load_instrument(transfer.ref).flow_rate.aspirate = transfer.flowrate
         location = self.get_well(transfer).bottom(transfer.z_bottom_offset)
-        self.default_instrument.aspirate(volume=transfer.volume, location=location)
+        self.load_instrument(transfer.ref).aspirate(volume=transfer.volume, location=location)
         if transfer.post_aspirate_air_gap_ul is not None:
-            self.default_instrument.air_gap(transfer.post_aspirate_air_gap_ul)
+            self.load_instrument(transfer.ref).air_gap(transfer.post_aspirate_air_gap_ul)
 
     def dispense(self, transfer: PartialTransfer) -> None:
-        self.default_instrument.flow_rate.dispense = transfer.flowrate
+        self.load_instrument(transfer.ref).flow_rate.dispense = transfer.flowrate
         location = self.get_well(transfer).bottom(transfer.z_bottom_offset)
-        self.default_instrument.dispense(volume=transfer.volume, location=location)
+        self.load_instrument(transfer.ref).dispense(volume=transfer.volume, location=location)
         if transfer.post_dispense_blowout_z_bottom_offset is not None:
             location = self.get_well(transfer).bottom(transfer.post_dispense_blowout_z_bottom_offset)
-            self.default_instrument.blow_out(location=location)
+            self.load_instrument(transfer.ref).blow_out(location=location)
+
+    def blow_out(self, blowout: BlowoutSettings) -> None:
+        self.load_instrument(blowout.ref).flow_rate.blow_out = blowout.flowrate
+        location = self.get_well(blowout).bottom(blowout.z_bottom_offset)
+        self.load_instrument(blowout.ref).blow_out(location=location)
+
+    def affix_tip(self, well_ref: WellRef) -> None:
+        well = self.get_well(well_ref)
+        self.load_instrument(well_ref.ref).pick_up_tip(well)
+
+    def eject_tip(self, well_ref: WellRef) -> None:
+        well = self.get_well(well_ref)
+        self.load_instrument(well_ref.ref).drop_tip(well)
+
+    def force_eject_tip(self, well_ref: WellRef) -> None:
+        """ During error recovery it is possible for a tip to be attached, but the Context
+            to not know it. This allows a force eject. """
+        if not self.load_instrument(well_ref.ref)._has_tip:  # pylint: disable=protected-access
+            try:
+                # pylint: disable=protected-access
+                self.load_instrument(well_ref.ref)._implementation._pipette_dict["has_tip"] = True  # type: ignore
+                # pylint: disable=protected-access
+                self.load_instrument(well_ref.ref)._implementation._pipette_dict["tip_length"] = MAX_TIP_LENGTH  # type: ignore
+            except Exception as ex:  # pylint: disable=broad-except
+                raise ValueError(f'Unable to set tip state to force eject. Error: {str(ex)}')
+        self.eject_tip(well_ref)
+
+    def home(self, ref: ResourceRef) -> None:
+        self.load_instrument(ref).home()
 
     def execute(self, command: Dict) -> Dict:
         try:
             command_id = command['command_id']
             if command_id == CommandId.Home:
-                self.default_instrument.home()
+                self.home(ResourceRef.from_dict(command['command_input']))
             elif command_id == CommandId.Initialize:
                 list(map(self.load_instrument, list(map(ResourceRef.from_dict, command['command_input']))))
             elif command_id == CommandId.LoadLabware:
@@ -193,19 +309,23 @@ class ContextManager():
             elif command_id == CommandId.LoadLabwareDef:
                 list(map(self.load_labware_from_definition, list(map(LoadLabwareDef.from_dict, command['command_input']))))
             elif command_id == CommandId.AffixTip:
-                affix_well = self.get_well(WellRef.from_dict(command['command_input']))
-                self.default_instrument.pick_up_tip(affix_well)
+                self.affix_tip(WellRef.from_dict(command['command_input']))
             elif command_id == CommandId.EjectTip:
-                eject_well = self.get_well(WellRef.from_dict(command['command_input']))
-                self.default_instrument.drop_tip(eject_well, False)
+                self.eject_tip(WellRef.from_dict(command['command_input']))
+            elif command_id == CommandId.ForceEjectTip:
+                self.force_eject_tip(WellRef.from_dict(command['command_input']))
             elif command_id == CommandId.Aspirate:
                 self.aspirate(PartialTransfer.from_dict(command['command_input']))
             elif command_id == CommandId.Dispense:
                 self.dispense(PartialTransfer.from_dict(command['command_input']))
+            elif command_id == CommandId.BlowOut:
+                self.blow_out(BlowoutSettings.from_dict(command['command_input']))
             elif command_id == CommandId.ClearLabware:
                 self.clear_labware()
             elif command_id == CommandId.Mix:
                 self.mix(MixSettings.from_dict(command['command_input']))
+            elif command_id == CommandId.MoveTo:
+                self.move_to(MoveDestination.from_dict(command['command_input']))
             else:
                 raise ValueError(f'command_id: {command_id} not a handled command')
 

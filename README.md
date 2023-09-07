@@ -2,28 +2,9 @@
 
 Opentrons REST API Server.
 
-# Setup
-
-- Install python >= 3.7
-- Setup and configure a virtual python environment
-  ```bash
-  python3.7 -m venv .venv
-  source .venv/bin/activate
-  pip install poetry
-  poetry install
-  ```
-
 # Install on Opentrons
 
-```bash
-export IP=xxx.xxx.xxx.xxx
-ssh root@${IP} 'mount -o remount,rw /'
-ssh root@${IP} 'mkdir -p /data/user_storage/opentronsrestserver'
-scp server/server.py root@${IP}:/data/user_storage/opentronsrestserver
-scp opentrons-rest-server.service root@${IP}:/etc/systemd/system
-ssh root@${IP} 'systemctl enable opentrons-rest-server'
-ssh root@${IP} '/sbin/reboot'
-```
+SSH into the Opentrons system and run `wget -q -O - https://raw.githubusercontent.com/genie-inc/opentrons_rest_api/master/install.sh | sh`
 
 # Restarting the Rest server
 

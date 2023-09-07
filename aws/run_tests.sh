@@ -11,7 +11,7 @@ fail() {
 }
 
 log "Running tests..."
-pytest -o addopts="-s tests --cov-report term-missing --cov=server --cov-fail-under=35 --cov-branch" || fail "pytest failed."
+pytest -o addopts="-s tests --cov-report term-missing --cov=server --cov-fail-under=60 --cov-branch" || fail "pytest failed."
 
 log "Running linter..."
 pylint server tests || fail "linting failed."

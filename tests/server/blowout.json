@@ -1,7 +1,7 @@
 {
     "commands": [
         {
-            "command_id": "Mix",
+            "command_id": "BlowOut",
             "command_input": {
                 "head_ref": {
                     "name": "foo",
@@ -9,10 +9,7 @@
                 },
                 "slot": 10,
                 "well_id": "A1",
-                "volume": 10.0,
-                "cycles": 3,
-                "aspirate_flowrate": 100,
-                "dispense_flowrate": 200,
+                "flowrate": 100,
                 "z_bottom_offset": 5
             }
         }
