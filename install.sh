@@ -23,6 +23,7 @@ chmod 644 server.py opentrons-rest-server.service
 
 # stop the service if it already exists
 systemctl stop opentrons-rest-server >/dev/null 2>&1
+systemctl disable opentrons-rest-server >/dev/null 2>&1
 
 echo Installing ...
 mount -o remount,rw /
