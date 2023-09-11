@@ -8,10 +8,10 @@ from fastapi import FastAPI
 from opentrons.execute import get_protocol_api
 from opentrons.simulate import get_protocol_api as get_simulated_protocol_api
 from opentrons.protocol_api import InstrumentContext, ProtocolContext, Well
-from opentrons.types import Point
+from opentrons.types import Point, Mount
 
 FIXED_TRASH_SLOT = 12
-VERSION = '0.2.0'
+VERSION = '0.2.1'
 MAX_TIP_LENGTH = 88
 
 
@@ -284,12 +284,17 @@ class ContextManager():
     def force_eject_tip(self, well_ref: WellRef) -> None:
         """ During error recovery it is possible for a tip to be attached, but the Context
             to not know it. This allows a force eject. """
-        if not self.load_instrument(well_ref.ref)._has_tip:  # pylint: disable=protected-access
+        inst = self.load_instrument(well_ref.ref)
+        if not inst._has_tip:  # pylint: disable=protected-access
             try:
-                # pylint: disable=protected-access
-                self.load_instrument(well_ref.ref)._implementation._pipette_dict["has_tip"] = True  # type: ignore
-                # pylint: disable=protected-access
-                self.load_instrument(well_ref.ref)._implementation._pipette_dict["tip_length"] = MAX_TIP_LENGTH  # type: ignore
+                if not self.ctx.is_simulating():
+                    mount = Mount.string_to_mount(inst.mount)
+                    # pylint: disable=protected-access
+                    inst._core._protocol_interface._sync_hardware.add_tip(mount, MAX_TIP_LENGTH)  # type: ignore
+                else:
+                    inst._implementation._pipette_dict["has_tip"] = True  # type: ignore # pylint: disable=protected-access
+                    # pylint: disable=protected-access
+                    inst._implementation._pipette_dict["tip_length"] = MAX_TIP_LENGTH  # type: ignore
             except Exception as ex:  # pylint: disable=broad-except
                 raise ValueError(f'Unable to set tip state to force eject. Error: {str(ex)}')
         self.eject_tip(well_ref)

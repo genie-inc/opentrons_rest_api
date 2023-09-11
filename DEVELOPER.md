@@ -30,9 +30,7 @@ To stop simulating just run `unset OT_DEBUG`
 
 # Running in debugger
 
-- Read this: https://fastapi.tiangolo.com/tutorial/debugging/
-- Follow the instructions for vscode.
-- You will probably want to run in simulate mode so will need to set the env var in the launcher:
+- Add the following debug target into VSCode:
 
 ```
   "version": "0.2.0",
@@ -50,3 +48,7 @@ To stop simulating just run `unset OT_DEBUG`
   ]
 }
 ```
+
+- Put a breakpoint in server/server.py
+- Run the launch target against the file debug/server_debug.py
+- For details read this: https://fastapi.tiangolo.com/tutorial/debugging/
