@@ -11,7 +11,7 @@ from opentrons.protocol_api import InstrumentContext, ProtocolContext, Well
 from opentrons.types import Point, Mount
 
 FIXED_TRASH_SLOT = 12
-VERSION = '0.2.1'
+VERSION = '0.3.0'
 MAX_TIP_LENGTH = 88
 
 
@@ -141,19 +141,58 @@ class BlowoutSettings(WellRef):
         return obj_dict
 
 
+
+@dataclass
+class XYZVector:
+    x: float  # pylint: disable=invalid-name
+    y: float  # pylint: disable=invalid-name
+    z: float  # pylint: disable=invalid-name
+
+    def to_dict(self) -> Dict[str, Any]:
+        obj_dict: Dict[str, Any] = DefaultDict()
+        obj_dict['x'] = self.x
+        obj_dict['y'] = self.y
+        obj_dict['z'] = self.z
+        return obj_dict
+
+    @classmethod
+    def from_dict(cls, state: Dict[str, Any]) -> 'XYZVector':
+        return XYZVector(x=float(state['x']), y=float(state['y']), z=float(state['z']))
+
+
+@dataclass
+class MoveOffset():
+    offset: XYZVector
+    ignore_tip: bool
+
+    @classmethod
+    def from_dict(cls, state: Dict[str, Any]) -> 'MoveOffset':
+        return MoveOffset(offset=XYZVector.from_dict(state['offset']), ignore_tip=bool(state['ignore_tip']))
+
+    def to_dict(self) -> Dict[str, Any]:
+        obj_dict: Dict[str, Any] = DefaultDict()
+        obj_dict['offset'] = self.offset.to_dict()
+        obj_dict['ignore_tip'] = self.ignore_tip
+        return obj_dict
+
+
 @dataclass
 class MoveDestination(WellRef):
-    z_offset: Optional[int]
+    offset: Optional[MoveOffset]
+    min_z: Optional[float]
 
     @classmethod
     def from_dict(cls, state: Dict[str, Any]) -> 'MoveDestination':
         ref = ResourceRef.from_dict(state['head_ref'])
-        return MoveDestination(ref=ref, slot=state['slot'], well_id=state['well_id'], z_offset=state.get('z_offset', None))
+        offset = MoveOffset.from_dict(state['offset']) if 'offset' in state else None
+        return MoveDestination(ref=ref, slot=state['slot'], well_id=state['well_id'], offset=offset, min_z=state.get('min_z', None))
 
     def to_dict(self) -> Dict[str, Any]:
         obj_dict = super().to_dict()
-        if self.z_offset is not None:
-            obj_dict['z_offset'] = self.z_offset
+        if self.offset is not None:
+            obj_dict['offset'] = self.offset.to_dict()
+        if self.min_z is not None:
+            obj_dict['min_z'] = self.min_z
         return obj_dict
 
 
@@ -205,7 +244,7 @@ class ContextManager():
         return 'OT_DEBUG' in environ
 
     def load_instrument(self, ref: ResourceRef) -> InstrumentContext:
-        if ref.location not in self.instruments or self.instruments[ref.location].hw_pipette.get("name", '') != ref.name:
+        if ref.location not in self.instruments or self.instruments[ref.location].hw_pipette.get('name', '') != ref.name:
             self.instruments[ref.location] = self.ctx.load_instrument(ref.name, ref.location, replace=True)
 
         return self.instruments[ref.location]
@@ -239,12 +278,14 @@ class ContextManager():
 
     def move_to(self, dest: MoveDestination) -> None:
         """ Perform a move to the specified location """
-        well = self.get_well(dest)
-        location = well.top()
-        if dest.z_offset is not None:
-            location = location.move(Point(0, 0, dest.z_offset))
-
-        self.load_instrument(dest.ref).move_to(location=location)
+        instrument = self.load_instrument(dest.ref)
+        offset = XYZVector(x=0.0, y=0.0, z=0.0)
+        if dest.offset is not None:
+            offset = dest.offset.offset
+            if dest.offset.ignore_tip:
+                offset.z -= instrument.hw_pipette.get('tip_length', 0)
+        location = self.get_well(dest).top().move(Point(offset.x, offset.y, offset.z))
+        instrument.move_to(location=location, minimum_z_height=dest.min_z)
 
     def reset(self) -> None:
         self.instruments = DefaultDict()

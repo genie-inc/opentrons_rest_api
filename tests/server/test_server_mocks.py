@@ -1,7 +1,8 @@
 """ Opentrons simulated/mock tests """  # pylint: disable=protected-access
 from unittest.mock import MagicMock
 from opentrons.simulate import get_protocol_api as get_simulated_protocol_api
-from server.server import ResourceRef, ContextManager, WellRef
+from opentrons.types import Point
+from server.server import ContextManager, MoveDestination, MoveOffset, ResourceRef, WellRef, XYZVector
 
 
 def test_load_instrument_none_loaded():
@@ -97,3 +98,42 @@ def test_force_eject():
         assert str(ex) == "Cannot perform DROPTIP without a tip attached"
     else:
         assert False
+
+
+def test_move_to():
+    context = ContextManager()
+    context._context = get_simulated_protocol_api('2.0')
+    assert len(context.instruments) == 0
+
+    ref = ResourceRef('p20_single_gen2', 'right')
+    instrument = context.load_instrument(ref)
+    instrument.move_to = MagicMock()
+
+    context.move_to(MoveDestination(ref=ref, slot=12, well_id='A1', offset=None, min_z=None))
+    assert instrument.move_to.mock_calls[0][2]['location'].point == Point(x=347.84, y=351.5, z=82.0)
+    assert instrument.move_to.mock_calls[0][2]['minimum_z_height'] is None
+
+    offset = MoveOffset(offset=XYZVector(-1.2, 2.0, 5.5), ignore_tip=True)
+    context.move_to(MoveDestination(ref=ref, slot=12, well_id='A1', offset=offset, min_z=150))
+    assert instrument.move_to.mock_calls[1][2]['location'].point == Point(x=346.64, y=353.5, z=87.5)
+    assert instrument.move_to.mock_calls[1][2]['minimum_z_height'] == 150
+
+
+def test_affix_tip():
+    context = ContextManager()
+    context._context = get_simulated_protocol_api('2.0')
+    ref = ResourceRef('p20_single_gen2', 'right')
+    instrument = context.load_instrument(ref)
+    instrument.pick_up_tip = MagicMock()
+    context.affix_tip(WellRef(ref, 12, 'A1'))
+    instrument.pick_up_tip.assert_called_once()
+
+
+def test_eject_tip():
+    context = ContextManager()
+    context._context = get_simulated_protocol_api('2.0')
+    ref = ResourceRef('p20_single_gen2', 'right')
+    instrument = context.load_instrument(ref)
+    instrument.drop_tip = MagicMock()
+    context.eject_tip(WellRef(ref, 12, 'A1'))
+    instrument.drop_tip.assert_called_once()
