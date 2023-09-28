@@ -184,4 +184,3 @@ def test_tip_touch():
      assert tip_touch.slot == 10
      assert tip_touch.well_id == 'A1'
      assert tip_touch.ref == ResourceRef('foo', 'left')
-     
