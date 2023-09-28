@@ -11,7 +11,7 @@ from opentrons.protocol_api import InstrumentContext, ProtocolContext, Well
 from opentrons.types import Point, Mount
 
 FIXED_TRASH_SLOT = 12
-VERSION = '0.3.0'
+VERSION = '0.3.1'
 MAX_TIP_LENGTH = 88
 
 
@@ -30,6 +30,7 @@ class CommandId(str, Enum):
     MoveTo = 'MoveTo'
     BlowOut = 'BlowOut'
     ForceEjectTip = 'ForceEjectTip'
+    TouchTip = 'TouchTip'
 
 
 @dataclass
@@ -46,6 +47,10 @@ class ResourceRef():
         obj_dict['name'] = self.name
         obj_dict['location'] = self.location
         return obj_dict
+
+    def __str__(self) -> str:
+         return f'head: {self.name}, location: {self.location}'
+
 
 
 @dataclass
@@ -141,7 +146,6 @@ class BlowoutSettings(WellRef):
         return obj_dict
 
 
-
 @dataclass
 class XYZVector:
     x: float  # pylint: disable=invalid-name
@@ -223,6 +227,25 @@ class MixSettings(WellRef):
         if self.post_mix_blowout_z_bottom_offset is not None:
             obj_dict['post_mix_blowout_z_bottom_offset'] = self.post_mix_blowout_z_bottom_offset
         return obj_dict
+
+
+@dataclass
+class TouchTipSettings(WellRef):
+     offset_from_top: float
+     radius: float
+     speed: float
+
+     @classmethod
+     def from_dict(cls, state: Dict[str, Any]) -> 'TouchTipSettings':
+         well_ref = super().from_dict(state)
+         return TouchTipSettings(ref=well_ref.ref, slot=well_ref.slot, well_id=well_ref.well_id, offset_from_top=float(state['offset_from_top']), radius=float(state['radius']), speed=float(state['speed']))
+
+     def to_dict(self) -> Dict[str, Any]:
+         obj_dict = super().to_dict()
+         obj_dict['offset_from_top'] = self.offset_from_top
+         obj_dict['radius'] = self.radius
+         obj_dict['speed'] = self.speed
+         return obj_dict
 
 
 class ContextManager():
@@ -334,14 +357,17 @@ class ContextManager():
                     inst._core._protocol_interface._sync_hardware.add_tip(mount, MAX_TIP_LENGTH)  # type: ignore
                 else:
                     inst._implementation._pipette_dict["has_tip"] = True  # type: ignore # pylint: disable=protected-access
-                    # pylint: disable=protected-access
-                    inst._implementation._pipette_dict["tip_length"] = MAX_TIP_LENGTH  # type: ignore
+                    inst._implementation._pipette_dict["tip_length"] = MAX_TIP_LENGTH  # type: ignore # pylint: disable=protected-access
             except Exception as ex:  # pylint: disable=broad-except
                 raise ValueError(f'Unable to set tip state to force eject. Error: {str(ex)}')
         self.eject_tip(well_ref)
 
     def home(self, ref: ResourceRef) -> None:
         self.load_instrument(ref).home()
+
+    def touch_tip(self, settings: TouchTipSettings) -> None:
+         well = self.get_well(settings)
+         self.load_instrument(settings.ref).touch_tip(well, settings.radius, settings.offset_from_top, settings.speed)
 
     def execute(self, command: Dict) -> Dict:
         try:
@@ -372,6 +398,8 @@ class ContextManager():
                 self.mix(MixSettings.from_dict(command['command_input']))
             elif command_id == CommandId.MoveTo:
                 self.move_to(MoveDestination.from_dict(command['command_input']))
+            elif command_id == CommandId.TouchTip:
+                 self.touch_tip(TouchTipSettings.from_dict(command['command_input']))
             else:
                 raise ValueError(f'command_id: {command_id} not a handled command')
 

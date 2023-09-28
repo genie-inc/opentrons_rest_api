@@ -1,6 +1,6 @@
 """ Command Parsing Tests """
 from json import loads
-from server.server import LoadLabwareDef, MoveDestination, PartialTransfer, MixSettings, ResourceRef, BlowoutSettings, execute
+from server.server import LoadLabwareDef, MoveDestination, PartialTransfer, MixSettings, ResourceRef, BlowoutSettings, TouchTipSettings, execute
 
 
 def test_load_labware():
@@ -171,3 +171,16 @@ def test_blowout():
     assert blowout2.slot == blowout.slot
     assert blowout2.well_id == blowout.well_id
     assert blowout2.ref == ResourceRef('foo', 'left')
+
+
+def test_tip_touch():
+     with open('tests/server/tip_touch.json') as command_file:
+         state_str = command_file.read()
+     commands = loads(state_str)
+     tip_touch = TouchTipSettings.from_dict(commands['commands'][0]['command_input'])
+     assert tip_touch.offset_from_top == -1
+     assert tip_touch.radius == 0.5
+     assert tip_touch.speed == 50
+     assert tip_touch.slot == 10
+     assert tip_touch.well_id == 'A1'
+     assert tip_touch.ref == ResourceRef('foo', 'left')
