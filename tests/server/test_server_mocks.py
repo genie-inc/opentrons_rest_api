@@ -2,7 +2,7 @@
 from unittest.mock import MagicMock
 from opentrons.simulate import get_protocol_api as get_simulated_protocol_api
 from opentrons.types import Point
-from server.server import ContextManager, MoveDestination, MoveOffset, ResourceRef, WellRef, XYZVector
+from server.server import ContextManager, MoveDestination, MoveOffset, ResourceRef, TouchTipSettings, WellRef, XYZVector
 
 
 def test_load_instrument_none_loaded():
@@ -137,3 +137,13 @@ def test_eject_tip():
     instrument.drop_tip = MagicMock()
     context.eject_tip(WellRef(ref, 12, 'A1'))
     instrument.drop_tip.assert_called_once()
+
+
+def test_tip_touch():
+     context = ContextManager()
+     context._context = get_simulated_protocol_api('2.0')
+     ref = ResourceRef('p20_single_gen2', 'right')
+     instrument = context.load_instrument(ref)
+     instrument.touch_tip = MagicMock()
+     context.touch_tip(TouchTipSettings(ref=ref, slot=12, well_id='A1', offset_from_top=-1, radius=0.5, speed=20))
+     instrument.touch_tip.assert_called_once()
