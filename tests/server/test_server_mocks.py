@@ -147,3 +147,4 @@ def test_tip_touch():
      instrument.touch_tip = MagicMock()
      context.touch_tip(TouchTipSettings(ref=ref, slot=12, well_id='A1', offset_from_top=-1, radius=0.5, speed=20))
      instrument.touch_tip.assert_called_once()
+     

@@ -146,6 +146,7 @@ class BlowoutSettings(WellRef):
         return obj_dict
 
 
+
 @dataclass
 class XYZVector:
     x: float  # pylint: disable=invalid-name
