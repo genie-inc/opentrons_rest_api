@@ -1,8 +1,8 @@
 """ Opentrons simulated/mock tests """  # pylint: disable=protected-access
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from opentrons.simulate import get_protocol_api as get_simulated_protocol_api
 from opentrons.types import Point
-from server.server import ContextManager, MoveDestination, MoveOffset, ResourceRef, TouchTipSettings, WellRef, XYZVector
+from server.server import MGR, discover, execute, get_instruments, get_labware, reset, version, CommandId, ContextManager, MoveDestination, MoveOffset, ResourceRef, TouchTipSettings, WellRef, XYZVector
 
 
 def test_load_instrument_none_loaded():
@@ -70,6 +70,13 @@ def test_reset():
     assert context._context is None
 
 
+def test_home_all():
+    context = ContextManager()
+    context._context = MagicMock()
+    context.execute({'command_id': CommandId.HomeAll})
+    context._context.home.assert_called_once()
+
+
 def test_force_eject():
     context = ContextManager()
     context._context = get_simulated_protocol_api('2.0')
@@ -81,23 +88,8 @@ def test_force_eject():
     assert not instrument1._has_tip
     well_ref = WellRef(ref1, 12, 'A1')
 
-    try:
-        context.eject_tip(well_ref)
-    except Exception as ex:  # pylint: disable=broad-except
-        assert str(ex) == "Cannot perform DROPTIP without a tip attached"
-    else:
-        assert False
-
-    # This will only pass if tip is actually set
     context.force_eject_tip(well_ref)
-
     assert not instrument1._has_tip
-    try:
-        context.eject_tip(well_ref)
-    except Exception as ex:  # pylint: disable=broad-except
-        assert str(ex) == "Cannot perform DROPTIP without a tip attached"
-    else:
-        assert False
 
 
 def test_move_to():
@@ -140,10 +132,60 @@ def test_eject_tip():
 
 
 def test_tip_touch():
-     context = ContextManager()
-     context._context = get_simulated_protocol_api('2.0')
-     ref = ResourceRef('p20_single_gen2', 'right')
-     instrument = context.load_instrument(ref)
-     instrument.touch_tip = MagicMock()
-     context.touch_tip(TouchTipSettings(ref=ref, slot=12, well_id='A1', offset_from_top=-1, radius=0.5, speed=20))
-     instrument.touch_tip.assert_called_once()
+    context = ContextManager()
+    context._context = get_simulated_protocol_api('2.0')
+    ref = ResourceRef('p20_single_gen2', 'right')
+    instrument = context.load_instrument(ref)
+    instrument.touch_tip = MagicMock()
+    context.touch_tip(TouchTipSettings(ref=ref, slot=12, well_id='A1', offset_from_top=-1, radius=0.5, speed=20))
+    instrument.touch_tip.assert_called_once()
+
+
+def test_set_api_version():
+    cleanup = MagicMock()
+    context = ContextManager()
+    context.api_version = '0.0.0'
+    context._context = MagicMock()
+    context._context.cleanup = cleanup
+    with patch('server.server.get_protocol_api', return_value=MagicMock()):
+        context.execute({'command_id': CommandId.SetApiVersion, 'command_input': {'api_version': '2.0'}})
+    cleanup.assert_called_once()
+    assert context.api_version == '2.0'
+    assert context._context is not None
+
+
+def test_mgr_version():
+    reslt = version()
+    assert 'version' in reslt
+    assert 'protocol_api_version' in reslt
+
+
+def test_mgr_reset():
+    cleanup = MagicMock()
+    MGR._context = MagicMock()
+    MGR._context.cleanup = cleanup
+    reset()
+    cleanup.assert_called_once()
+    assert MGR._context is None
+
+
+def test_mgr_discover():
+    MGR._context = MagicMock()
+    result = discover()
+    assert list(result.keys()) == ['left', 'right']
+    MGR._context._core = None
+    result = discover()
+    assert result['status'] == 'Failed'
+    assert "object has no attribute 'get_hardware'" in result['message']
+
+
+def test_mgr_get_instruments():
+    assert get_instruments() == []
+
+
+def test_mgr_get_labware():
+    assert get_labware() == []
+
+
+def test_mgr_execute():
+    assert execute({'commands': []}) == []

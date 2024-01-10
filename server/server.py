@@ -7,17 +7,29 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from opentrons.execute import get_protocol_api
 from opentrons.simulate import get_protocol_api as get_simulated_protocol_api
-from opentrons.protocol_api import InstrumentContext, ProtocolContext, Well
+from opentrons.protocol_api import InstrumentContext, MAX_SUPPORTED_VERSION, MIN_SUPPORTED_VERSION, ProtocolContext, Well
 from opentrons.types import Point, Mount
 
-FIXED_TRASH_SLOT = 12
-VERSION = '0.3.1'
-MAX_TIP_LENGTH = 88
+FIXED_TRASH = 'fixedTrash'
+VERSION = '0.4.0'
+MAX_TIP_LENGTH = 80
+
+
+class OpentronsRobotType(str, Enum):
+    OT2 = 'OT-2 Standard'
+    Flex = 'OT-3 Standard'
+
+
+class CommandStatus(str, Enum):
+    Completed = 'Completed'
+    Failed = 'Failed'
 
 
 class CommandId(str, Enum):
     Home = 'Home'
+    HomeAll = 'HomeAll'
     Initialize = 'Initialize'
+    SetApiVersion = 'SetApiVersion'
     LoadLabware = 'LoadLabware'
     AffixTip = 'AffixTip'
     EjectTip = 'EjectTip'
@@ -31,6 +43,20 @@ class CommandId(str, Enum):
     BlowOut = 'BlowOut'
     ForceEjectTip = 'ForceEjectTip'
     TouchTip = 'TouchTip'
+
+
+@dataclass
+class SetApiVersionCommand():
+    api_version: str
+
+    @classmethod
+    def from_dict(cls, state: Dict[str, Any]) -> 'SetApiVersionCommand':
+        return SetApiVersionCommand(api_version=state['api_version'])
+
+    def to_dict(self) -> Dict[str, Any]:
+        obj_dict: Dict[str, Any] = DefaultDict()
+        obj_dict['api_version'] = self.api_version
+        return obj_dict
 
 
 @dataclass
@@ -49,8 +75,7 @@ class ResourceRef():
         return obj_dict
 
     def __str__(self) -> str:
-         return f'head: {self.name}, location: {self.location}'
-
+        return f'head: {self.name}, location: {self.location}'
 
 
 @dataclass
@@ -146,7 +171,6 @@ class BlowoutSettings(WellRef):
         return obj_dict
 
 
-
 @dataclass
 class XYZVector:
     x: float  # pylint: disable=invalid-name
@@ -232,40 +256,53 @@ class MixSettings(WellRef):
 
 @dataclass
 class TouchTipSettings(WellRef):
-     offset_from_top: float
-     radius: float
-     speed: float
+    offset_from_top: float
+    radius: float
+    speed: float
 
-     @classmethod
-     def from_dict(cls, state: Dict[str, Any]) -> 'TouchTipSettings':
-         well_ref = super().from_dict(state)
-         return TouchTipSettings(ref=well_ref.ref, slot=well_ref.slot, well_id=well_ref.well_id, offset_from_top=float(state['offset_from_top']), radius=float(state['radius']), speed=float(state['speed']))
+    @classmethod
+    def from_dict(cls, state: Dict[str, Any]) -> 'TouchTipSettings':
+        well_ref = super().from_dict(state)
+        return TouchTipSettings(ref=well_ref.ref, slot=well_ref.slot, well_id=well_ref.well_id, offset_from_top=float(state['offset_from_top']), radius=float(state['radius']), speed=float(state['speed']))
 
-     def to_dict(self) -> Dict[str, Any]:
-         obj_dict = super().to_dict()
-         obj_dict['offset_from_top'] = self.offset_from_top
-         obj_dict['radius'] = self.radius
-         obj_dict['speed'] = self.speed
-         return obj_dict
+    def to_dict(self) -> Dict[str, Any]:
+        obj_dict = super().to_dict()
+        obj_dict['offset_from_top'] = self.offset_from_top
+        obj_dict['radius'] = self.radius
+        obj_dict['speed'] = self.speed
+        return obj_dict
 
 
 class ContextManager():
     def __init__(self):
         self._context: Optional[ProtocolContext] = None
         self.instruments: Dict[str, InstrumentContext] = DefaultDict()
+        self.api_version = str(MIN_SUPPORTED_VERSION)
 
     @property
     def ctx(self) -> ProtocolContext:
         if self._context is None:
             if not self.debug:
-                self._context = get_protocol_api('2.0')
+                self._context = get_protocol_api(self.api_version)
             else:
-                self._context = get_simulated_protocol_api('2.0')
+                self._context = get_simulated_protocol_api(self.api_version)
         return self._context
+
+    @property
+    def _hardware(self):
+        """ Using Private APIs -- may not work with all Opentrons software packages """
+        return self.ctx._core.get_hardware()  # pylint: disable=protected-access
 
     @property
     def debug(self) -> bool:
         return 'OT_DEBUG' in environ
+
+    def get_protocol_api(self, api_version_request: SetApiVersionCommand) -> ProtocolContext:
+        if self.api_version != api_version_request.api_version:
+            self.api_version = api_version_request.api_version
+            self.reset()
+        return self.ctx
+
 
     def load_instrument(self, ref: ResourceRef) -> InstrumentContext:
         if ref.location not in self.instruments or self.instruments[ref.location].hw_pipette.get('name', '') != ref.name:
@@ -286,9 +323,9 @@ class ContextManager():
 
     def clear_labware(self) -> None:
         for slot_id in self.ctx.deck:
-            if self.ctx.deck[slot_id] is not None:
-                if slot_id != FIXED_TRASH_SLOT:
-                    del self.ctx.deck[slot_id]
+            deck_item: Any = self.ctx.deck[slot_id]
+            if deck_item is not None and (not hasattr(deck_item, 'quirks') or FIXED_TRASH not in deck_item.quirks):
+                del self.ctx.deck[slot_id]
 
     def mix(self, mix: MixSettings):
         """ Perform a standalone mix """
@@ -350,31 +387,29 @@ class ContextManager():
         """ During error recovery it is possible for a tip to be attached, but the Context
             to not know it. This allows a force eject. """
         inst = self.load_instrument(well_ref.ref)
-        if not inst._has_tip:  # pylint: disable=protected-access
-            try:
-                if not self.ctx.is_simulating():
-                    mount = Mount.string_to_mount(inst.mount)
-                    # pylint: disable=protected-access
-                    inst._core._protocol_interface._sync_hardware.add_tip(mount, MAX_TIP_LENGTH)  # type: ignore
-                else:
-                    inst._implementation._pipette_dict["has_tip"] = True  # type: ignore # pylint: disable=protected-access
-                    inst._implementation._pipette_dict["tip_length"] = MAX_TIP_LENGTH  # type: ignore # pylint: disable=protected-access
-            except Exception as ex:  # pylint: disable=broad-except
-                raise ValueError(f'Unable to set tip state to force eject. Error: {str(ex)}')
-        self.eject_tip(well_ref)
+        if inst._has_tip:  # pylint: disable=protected-access
+            self.eject_tip(well_ref)
+        elif not self.ctx.is_simulating() and self._hardware.get_config().model == OpentronsRobotType.OT2:
+            mount = Mount.string_to_mount(inst.mount)
+            self._hardware.add_tip(mount, MAX_TIP_LENGTH)
+            self.eject_tip(well_ref)
 
     def home(self, ref: ResourceRef) -> None:
         self.load_instrument(ref).home()
 
     def touch_tip(self, settings: TouchTipSettings) -> None:
-         well = self.get_well(settings)
-         self.load_instrument(settings.ref).touch_tip(well, settings.radius, settings.offset_from_top, settings.speed)
+        well = self.get_well(settings)
+        self.load_instrument(settings.ref).touch_tip(well, settings.radius, settings.offset_from_top, settings.speed)
 
     def execute(self, command: Dict) -> Dict:
         try:
             command_id = command['command_id']
-            if command_id == CommandId.Home:
+            if command_id == CommandId.HomeAll:
+                self.ctx.home()
+            elif command_id == CommandId.Home:
                 self.home(ResourceRef.from_dict(command['command_input']))
+            elif command_id == CommandId.SetApiVersion:
+                self.get_protocol_api(SetApiVersionCommand.from_dict(command['command_input']))
             elif command_id == CommandId.Initialize:
                 list(map(self.load_instrument, list(map(ResourceRef.from_dict, command['command_input']))))
             elif command_id == CommandId.LoadLabware:
@@ -400,13 +435,13 @@ class ContextManager():
             elif command_id == CommandId.MoveTo:
                 self.move_to(MoveDestination.from_dict(command['command_input']))
             elif command_id == CommandId.TouchTip:
-                 self.touch_tip(TouchTipSettings.from_dict(command['command_input']))
+                self.touch_tip(TouchTipSettings.from_dict(command['command_input']))
             else:
                 raise ValueError(f'command_id: {command_id} not a handled command')
 
-            return {'command_id': command_id, 'status': 'Completed'}
+            return {'command_id': command_id, 'status': CommandStatus.Completed}
         except Exception as ex:  # pylint: disable=broad-except
-            return {'command_id': command_id, 'status': 'Failed', 'message': str(ex)}
+            return {'command_id': command_id, 'status': CommandStatus.Failed, 'message': str(ex)}
 
 
 MGR = ContextManager()
@@ -422,13 +457,23 @@ app = FastAPI(lifespan=lifespan)  # pylint: disable=invalid-name
 
 @app.get('/version/')
 def version():
-    return {'version': VERSION}
+    return {'version': VERSION, 'protocol_api_version' : {'min': str(MIN_SUPPORTED_VERSION), 'max': str(MAX_SUPPORTED_VERSION)}}
 
 
 @app.post('/reset')
 def reset():
     MGR.reset()
     return {}
+
+
+@app.get('/discover/')
+def discover():
+    """ This command uses a private API and therefore may not always work """
+    try:
+        attached = MGR._hardware.attached_instruments  # type: ignore # pylint: disable=protected-access
+        return {'left': attached[Mount.LEFT], 'right': attached[Mount.RIGHT]}
+    except Exception as ex:  # pylint: disable=broad-except
+        return {'status': CommandStatus.Failed, 'message': str(ex)}
 
 
 @app.get('/instruments/')

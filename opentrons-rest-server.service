@@ -4,9 +4,9 @@ after=nginx.service
 
 [Service]
 Environment=RUNNING_ON_PI=1
-User=root
+Environment=PYTHONPATH=/opt/opentrons-robot-server:/usr/lib/python3.8/site-packages
 WorkingDirectory=/data/user_storage/opentronsrestserver
-ExecStart=uvicorn server:app --host 0.0.0.0 --port 8080
+ExecStart=python3 -m uvicorn server:app --host 0.0.0.0 --port 8080
 Restart=on-failure
 RestartSec=5s
 
