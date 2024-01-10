@@ -13,7 +13,7 @@ packages = [
 python = "^3.7"
 fastapi = "^0.68.2"
 uvicorn = "^0.14"
-opentrons = "^6.2.1"
+opentrons = "^7.1.0"
 
 [tool.poetry.group.dev.dependencies]
 mypy = "0.740"
