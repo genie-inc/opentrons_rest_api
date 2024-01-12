@@ -35,9 +35,9 @@ systemctl disable opentrons-rest-server >/dev/null 2>&1
 
 echo Installing ...
 mount -o remount,rw /
-mkdir -p /data/user_storage/opentronsrestserver
-mv server.py /data/user_storage/opentronsrestserver/
-mv opentrons-rest-server.service /etc/systemd/system/
+mkdir -p /opt/opentrons-rest-server
+mv server.py /opt/opentrons-rest-server/
+mv opentrons-rest-server.service /lib/systemd/system/
 systemctl enable opentrons-rest-server || fail "Failed to enable REST API Service"
 systemctl start opentrons-rest-server || fail "Failed to start REST API Service"
 echo Successfully installed REST API extension

@@ -11,7 +11,7 @@ from opentrons.protocol_api import InstrumentContext, MAX_SUPPORTED_VERSION, MIN
 from opentrons.types import Point, Mount
 
 FIXED_TRASH = 'fixedTrash'
-VERSION = '0.4.0'
+VERSION = '0.4.1'
 MAX_TIP_LENGTH = 80
 
 
@@ -386,12 +386,15 @@ class ContextManager():
     def force_eject_tip(self, well_ref: WellRef) -> None:
         """ During error recovery it is possible for a tip to be attached, but the Context
             to not know it. This allows a force eject. """
-        inst = self.load_instrument(well_ref.ref)
-        if inst._has_tip:  # pylint: disable=protected-access
-            self.eject_tip(well_ref)
-        elif not self.ctx.is_simulating() and self._hardware.get_config().model == OpentronsRobotType.OT2:
-            mount = Mount.string_to_mount(inst.mount)
-            self._hardware.add_tip(mount, MAX_TIP_LENGTH)
+        if self._hardware.get_config().model == OpentronsRobotType.OT2:
+            inst = self.load_instrument(well_ref.ref)
+            if inst._has_tip:  # pylint: disable=protected-access
+                self.eject_tip(well_ref)
+            elif not self.ctx.is_simulating():
+                mount = Mount.string_to_mount(inst.mount)
+                self._hardware.add_tip(mount, MAX_TIP_LENGTH)
+                self.eject_tip(well_ref)
+        else:
             self.eject_tip(well_ref)
 
     def home(self, ref: ResourceRef) -> None:
