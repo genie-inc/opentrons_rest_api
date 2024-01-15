@@ -11,7 +11,7 @@ from opentrons.protocol_api import InstrumentContext, MAX_SUPPORTED_VERSION, MIN
 from opentrons.types import Point, Mount
 
 FIXED_TRASH = 'fixedTrash'
-VERSION = '0.4.1'
+VERSION = '0.4.2'
 MAX_TIP_LENGTH = 80
 
 
@@ -472,9 +472,13 @@ def reset():
 @app.get('/discover/')
 def discover():
     """ This command uses a private API and therefore may not always work """
+    discover_properties = ['name', 'channels', 'min_volume', 'max_volume', 'pipette_id', 'model', 'has_tip']
     try:
-        attached = MGR._hardware.attached_instruments  # type: ignore # pylint: disable=protected-access
-        return {'left': attached[Mount.LEFT], 'right': attached[Mount.RIGHT]}
+        attached: Dict = MGR._hardware.attached_instruments  # type: ignore # pylint: disable=protected-access
+        left = attached.get(Mount.LEFT, {})
+        right = attached.get(Mount.LEFT, {})
+        return {'left': {k: left.get(k, None) for k in discover_properties},
+                'right': {k: right.get(k, None) for k in discover_properties}}
     except Exception as ex:  # pylint: disable=broad-except
         return {'status': CommandStatus.Failed, 'message': str(ex)}
 
